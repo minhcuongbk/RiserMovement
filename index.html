@@ -4,24 +4,15 @@
 <meta charset="UTF-8">
 <title>Riser 3D Displacement Monitoring</title>
 
-<!-- Plotly -->
 <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
-
-<!-- SheetJS -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
 
 <style>
-  body {
-    font-family: Arial, sans-serif;
-    margin: 20px;
-  }
-  #controls {
-    margin: 10px 0;
-  }
-  label {
-    margin-right: 15px;
-    white-space: nowrap;
-  }
+  body { font-family: Arial, sans-serif; margin: 20px; }
+  label { margin-right: 15px; }
+  table { border-collapse: collapse; margin-top: 10px; width: 100%; }
+  th, td { border: 1px solid #ccc; padding: 6px; text-align: center; }
+  th { background: #f2f2f2; }
 </style>
 </head>
 
@@ -29,18 +20,25 @@
 
 <h2>Riser 3D Displacement Monitoring</h2>
 
-<input type="file" id="fileInput" accept=".xlsx" />
+<input type="file" id="fileInput" accept=".xlsx">
 
-<div id="controls">
+<div style="margin-top:10px;">
   <label>
-    <input type="checkbox" id="capacityToggle" checked onchange="toggleCapacity(this.checked)">
+    <input type="checkbox" checked onchange="toggleCapacity(this.checked)">
     Show Capacity Color
+  </label>
+
+  <label>
+    <input type="checkbox" checked onchange="toggleTable(this.checked)">
+    Show Data Table
   </label>
 </div>
 
-<div id="conditionControls"></div>
+<div id="conditionControls" style="margin-top:10px;"></div>
 
-<div id="plot" style="width:100%;height:750px;"></div>
+<div id="plot" style="width:100%;height:700px;"></div>
+
+<div id="tableContainer"></div>
 
 <script>
 let rows = [];
@@ -48,20 +46,16 @@ let traces = [];
 let conditionMap = {};
 let showCapacity = true;
 
-document.getElementById("fileInput").addEventListener("change", function (e) {
-  const file = e.target.files[0];
+document.getElementById("fileInput").addEventListener("change", e => {
   const reader = new FileReader();
-
-  reader.onload = function (evt) {
-    const data = new Uint8Array(evt.target.result);
-    const workbook = XLSX.read(data, { type: "array" });
+  reader.onload = evt => {
+    const workbook = XLSX.read(new Uint8Array(evt.target.result), { type: "array" });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
-
     rows = XLSX.utils.sheet_to_json(sheet);
     buildPlot();
+    buildTable();
   };
-
-  reader.readAsArrayBuffer(file);
+  reader.readAsArrayBuffer(e.target.files[0]);
 });
 
 function buildPlot() {
@@ -72,15 +66,16 @@ function buildPlot() {
   const conditions = [...new Set(rows.map(r => r.Condition))];
 
   conditions.forEach((cond, i) => {
-    const data = rows.filter(r => r.Condition === cond);
+    const data = rows.filter(r => r.Condition === cond); // KHÔNG SORT
 
     const x = data.map(r => r.x);
     const y = data.map(r => r.y);
     const z = data.map(r => r.z);
     const cap = data.map(r => r.Capacity);
 
+    const baseIndex = traces.length;
+
     // Trace chính
-    const mainTraceIndex = traces.length;
     traces.push({
       name: cond,
       x, y, z,
@@ -97,18 +92,16 @@ function buildPlot() {
       }
     });
 
-    // Điểm bắt đầu (xanh)
+    // Start – record đầu tiên
     traces.push({
       name: cond + " (Start)",
-      x: [x[0]],
-      y: [y[0]],
-      z: [z[0]],
+      x: [x[0]], y: [y[0]], z: [z[0]],
       mode: "markers",
       type: "scatter3d",
       marker: { size: 9, color: "green" }
     });
 
-    // Điểm kết thúc (đỏ)
+    // End – record cuối cùng
     traces.push({
       name: cond + " (End)",
       x: [x[x.length - 1]],
@@ -119,7 +112,7 @@ function buildPlot() {
       marker: { size: 9, color: "red" }
     });
 
-    conditionMap[cond] = mainTraceIndex;
+    conditionMap[cond] = baseIndex;
 
     document.getElementById("conditionControls").innerHTML +=
       `<label>
@@ -130,28 +123,25 @@ function buildPlot() {
   });
 
   Plotly.newPlot("plot", traces, {
-    title: "Riser Displacement 3D",
+    title: "Riser Movement 3D",
     scene: {
       xaxis: { title: "N – S" },
       yaxis: { title: "W – E" },
       zaxis: { title: "Vertical" }
-    },
-    legend: { orientation: "h" }
+    }
   });
 }
 
 function toggleCondition(cond, visible) {
-  const idx = conditionMap[cond];
-  Plotly.restyle(
-    "plot",
+  const i = conditionMap[cond];
+  Plotly.restyle("plot",
     { visible: visible ? true : "legendonly" },
-    [idx, idx + 1, idx + 2]
+    [i, i + 1, i + 2]
   );
 }
 
 function toggleCapacity(enable) {
   showCapacity = enable;
-
   traces.forEach((t, i) => {
     if (t.mode === "lines+markers") {
       Plotly.restyle("plot", {
@@ -160,6 +150,34 @@ function toggleCapacity(enable) {
       }, i);
     }
   });
+}
+
+function buildTable() {
+  let html = `<table>
+    <tr>
+      <th>Date</th>
+      <th>Condition</th>
+      <th>x</th><th>y</th><th>z</th>
+      <th>Capacity</th>
+    </tr>`;
+
+  rows.forEach(r => {
+    html += `<tr>
+      <td>${r.Date}</td>
+      <td>${r.Condition}</td>
+      <td>${r.x}</td>
+      <td>${r.y}</td>
+      <td>${r.z}</td>
+      <td>${r.Capacity}</td>
+    </tr>`;
+  });
+
+  html += "</table>";
+  document.getElementById("tableContainer").innerHTML = html;
+}
+
+function toggleTable(show) {
+  document.getElementById("tableContainer").style.display = show ? "block" : "none";
 }
 </script>
 
