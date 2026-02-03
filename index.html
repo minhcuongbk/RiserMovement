@@ -1,183 +1,205 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="vi">
 <head>
 <meta charset="UTF-8">
-<title>Riser 3D Displacement Monitoring</title>
+<title>3D Riser Movement Tracking</title>
 
-<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+<script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
 
 <style>
-  body { font-family: Arial, sans-serif; margin: 20px; }
-  label { margin-right: 15px; }
-  table { border-collapse: collapse; margin-top: 10px; width: 100%; }
-  th, td { border: 1px solid #ccc; padding: 6px; text-align: center; }
-  th { background: #f2f2f2; }
+body { font-family: Arial; margin: 15px; }
+.container { display: flex; gap: 15px; }
+#plot { width: 70%; height: 650px; }
+#panel { width: 30%; }
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+th, td {
+  border: 1px solid #ccc;
+  padding: 6px;
+  text-align: center;
+}
+th { background: #f2f2f2; }
 </style>
 </head>
 
 <body>
 
-<h2>Riser 3D Displacement Monitoring</h2>
+<h2>3D Riser Movement Tracking</h2>
+<input type="file" id="fileInput" accept=".xlsx,.xls">
 
-<input type="file" id="fileInput" accept=".xlsx">
+<div class="container">
+  <div id="plot"></div>
 
-<div style="margin-top:10px;">
-  <label>
-    <input type="checkbox" checked onchange="toggleCapacity(this.checked)">
-    Show Capacity Color
-  </label>
-
-  <label>
-    <input type="checkbox" checked onchange="toggleTable(this.checked)">
-    Show Data Table
-  </label>
+  <div id="panel">
+    <h3>Condition Control</h3>
+    <table id="conditionTable">
+      <thead>
+        <tr>
+          <th>Show</th>
+          <th>Condition</th>
+          <th>Date</th>
+          <th>Capacity</th>
+          <th>Color</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
 </div>
 
-<div id="conditionControls" style="margin-top:10px;"></div>
-
-<div id="plot" style="width:100%;height:700px;"></div>
-
-<div id="tableContainer"></div>
-
 <script>
-let rows = [];
-let traces = [];
-let conditionMap = {};
-let showCapacity = true;
+let rawData = [];
+let conditions = [];
+let visible = {};
 
-document.getElementById("fileInput").addEventListener("change", e => {
+document.getElementById("fileInput").addEventListener("change", loadFile);
+
+function loadFile(e) {
   const reader = new FileReader();
   reader.onload = evt => {
-    const workbook = XLSX.read(new Uint8Array(evt.target.result), { type: "array" });
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    rows = XLSX.utils.sheet_to_json(sheet);
-    buildPlot();
+    const wb = XLSX.read(evt.target.result, { type: "binary" });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+
+    // Giữ nguyên Date dạng TEXT
+    rawData = XLSX.utils.sheet_to_json(sheet, {
+      raw: false,
+      defval: ""
+    });
+
+    extractConditions();
     buildTable();
+    drawPlot();
   };
-  reader.readAsArrayBuffer(e.target.files[0]);
-});
-
-function buildPlot() {
-  traces = [];
-  conditionMap = {};
-  document.getElementById("conditionControls").innerHTML = "";
-
-  const conditions = [...new Set(rows.map(r => r.Condition))];
-
-  conditions.forEach((cond, i) => {
-    const data = rows.filter(r => r.Condition === cond); // KHÔNG SORT
-
-    const x = data.map(r => r.x);
-    const y = data.map(r => r.y);
-    const z = data.map(r => r.z);
-    const cap = data.map(r => r.Capacity);
-
-    const baseIndex = traces.length;
-
-    // Trace chính
-    traces.push({
-      name: cond,
-      x, y, z,
-      mode: "lines+markers",
-      type: "scatter3d",
-      text: data.map(r =>
-        `Date: ${r.Date}<br>Capacity: ${r.Capacity}%`
-      ),
-      marker: {
-        size: 6,
-        color: showCapacity ? cap : "gray",
-        colorscale: "Jet",
-        colorbar: showCapacity && i === 0 ? { title: "Capacity (%)" } : undefined
-      }
-    });
-
-    // Start – record đầu tiên
-    traces.push({
-      name: cond + " (Start)",
-      x: [x[0]], y: [y[0]], z: [z[0]],
-      mode: "markers",
-      type: "scatter3d",
-      marker: { size: 9, color: "green" }
-    });
-
-    // End – record cuối cùng
-    traces.push({
-      name: cond + " (End)",
-      x: [x[x.length - 1]],
-      y: [y[y.length - 1]],
-      z: [z[z.length - 1]],
-      mode: "markers",
-      type: "scatter3d",
-      marker: { size: 9, color: "red" }
-    });
-
-    conditionMap[cond] = baseIndex;
-
-    document.getElementById("conditionControls").innerHTML +=
-      `<label>
-        <input type="checkbox" checked
-          onchange="toggleCondition('${cond}', this.checked)">
-        ${cond}
-      </label>`;
-  });
-
-  Plotly.newPlot("plot", traces, {
-    title: "Riser Movement 3D",
-    scene: {
-      xaxis: { title: "N – S" },
-      yaxis: { title: "W – E" },
-      zaxis: { title: "Vertical" }
-    }
-  });
+  reader.readAsBinaryString(e.target.files[0]);
 }
 
-function toggleCondition(cond, visible) {
-  const i = conditionMap[cond];
-  Plotly.restyle("plot",
-    { visible: visible ? true : "legendonly" },
-    [i, i + 1, i + 2]
-  );
-}
-
-function toggleCapacity(enable) {
-  showCapacity = enable;
-  traces.forEach((t, i) => {
-    if (t.mode === "lines+markers") {
-      Plotly.restyle("plot", {
-        "marker.color": enable ? [t.marker.color] : ["gray"],
-        "marker.colorbar": enable ? t.marker.colorbar : null
-      }, i);
+function extractConditions() {
+  conditions = [];
+  rawData.forEach(r => {
+    if (!conditions.includes(r.Condition)) {
+      conditions.push(r.Condition);
     }
   });
+  conditions.forEach(c => visible[c] = true);
+}
+
+function getColor(cond) {
+  if (cond === conditions[0]) return "yellow";          // condition đầu
+  if (cond === conditions[conditions.length - 1]) return "red"; // condition cuối
+  return "green";
+}
+
+function getEndPoint(cond) {
+  const rows = rawData.filter(r => r.Condition === cond);
+  return rows[rows.length - 1];
 }
 
 function buildTable() {
-  let html = `<table>
-    <tr>
-      <th>Date</th>
-      <th>Condition</th>
-      <th>x</th><th>y</th><th>z</th>
-      <th>Capacity</th>
-    </tr>`;
+  const tb = document.querySelector("#conditionTable tbody");
+  tb.innerHTML = "";
 
-  rows.forEach(r => {
-    html += `<tr>
-      <td>${r.Date}</td>
-      <td>${r.Condition}</td>
-      <td>${r.x}</td>
-      <td>${r.y}</td>
-      <td>${r.z}</td>
-      <td>${r.Capacity}</td>
-    </tr>`;
+  conditions.forEach(cond => {
+    const rows = rawData.filter(r => r.Condition === cond);
+    const startDate = rows[0].Date;
+    const endCapacity = Math.round(rows[rows.length - 1].Capacity);
+
+    const tr = document.createElement("tr");
+
+    const chk = document.createElement("input");
+    chk.type = "checkbox";
+    chk.checked = true;
+    chk.onchange = () => {
+      visible[cond] = chk.checked;
+      drawPlot();
+    };
+
+    tr.innerHTML = `
+      <td></td>
+      <td>${cond}</td>
+      <td>${startDate}</td>
+      <td>${endCapacity}</td>
+      <td style="color:${getColor(cond)}">${getColor(cond)}</td>
+    `;
+    tr.children[0].appendChild(chk);
+    tb.appendChild(tr);
   });
-
-  html += "</table>";
-  document.getElementById("tableContainer").innerHTML = html;
 }
 
-function toggleTable(show) {
-  document.getElementById("tableContainer").style.display = show ? "block" : "none";
+function drawPlot() {
+  const traces = [];
+
+  // ===== ĐƯỜNG 3D THEO TỪNG CONDITION =====
+  conditions.forEach(cond => {
+    if (!visible[cond]) return;
+
+    const d = rawData.filter(r => r.Condition === cond);
+
+    traces.push({
+      type: "scatter3d",
+      mode: "lines+markers",
+      name: cond,
+
+      x: d.map(r => r.x),
+      y: d.map(r => r.y),
+      z: d.map(r => r.z),
+
+      marker: { size: 4, color: getColor(cond) },
+      line: { width: 3, color: getColor(cond) },
+
+      text: d.map(r =>
+        `Condition: ${cond}<br>` +
+        `Date: ${r.Date}<br>` +
+        `X (N-S): ${Math.round(r.x)}<br>` +
+        `Y (W-E): ${Math.round(r.y)}<br>` +
+        `Z (V riser): ${Math.round(r.z)}<br>` +
+        `Capacity: ${Math.round(r.Capacity)}`
+      ),
+      hovertemplate: "%{text}<extra></extra>"
+    });
+  });
+
+  // ===== ĐOẠN THẲNG NỐI GIỮA CÁC CONDITION (DỊCH CHUYỂN) =====
+  for (let i = 0; i < conditions.length - 1; i++) {
+    const c1 = conditions[i];
+    const c2 = conditions[i + 1];
+
+    if (!visible[c1] || !visible[c2]) continue;
+
+    const p1 = getEndPoint(c1);
+    const p2 = getEndPoint(c2);
+
+    traces.push({
+      type: "scatter3d",
+      mode: "lines",
+
+      x: [p1.x, p2.x],
+      y: [p1.y, p2.y],
+      z: [p1.z, p2.z],
+
+      line: {
+        color: "gray",
+        width: 4,
+        dash: "dash"
+      },
+
+      name: `${c1} → ${c2}`,
+      hoverinfo: "skip"
+    });
+  }
+
+  Plotly.newPlot("plot", traces, {
+    scene: {
+      xaxis: { title: "N-S" },
+      yaxis: { title: "W-E" },
+      zaxis: { title: "V riser" }
+    },
+    margin: { l: 0, r: 0, t: 0, b: 0 }
+  });
 }
 </script>
 
