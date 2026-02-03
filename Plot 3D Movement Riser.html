@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Riser 3D Displacement Monitoring</title>
+
+<!-- Plotly -->
+<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+
+<!-- SheetJS -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    margin: 20px;
+  }
+  #controls {
+    margin: 10px 0;
+  }
+  label {
+    margin-right: 15px;
+    white-space: nowrap;
+  }
+</style>
+</head>
+
+<body>
+
+<h2>Riser 3D Displacement Monitoring</h2>
+
+<input type="file" id="fileInput" accept=".xlsx" />
+
+<div id="controls">
+  <label>
+    <input type="checkbox" id="capacityToggle" checked onchange="toggleCapacity(this.checked)">
+    Show Capacity Color
+  </label>
+</div>
+
+<div id="conditionControls"></div>
+
+<div id="plot" style="width:100%;height:750px;"></div>
+
+<script>
+let rows = [];
+let traces = [];
+let conditionMap = {};
+let showCapacity = true;
+
+document.getElementById("fileInput").addEventListener("change", function (e) {
+  const file = e.target.files[0];
+  const reader = new FileReader();
+
+  reader.onload = function (evt) {
+    const data = new Uint8Array(evt.target.result);
+    const workbook = XLSX.read(data, { type: "array" });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+
+    rows = XLSX.utils.sheet_to_json(sheet);
+    buildPlot();
+  };
+
+  reader.readAsArrayBuffer(file);
+});
+
+function buildPlot() {
+  traces = [];
+  conditionMap = {};
+  document.getElementById("conditionControls").innerHTML = "";
+
+  const conditions = [...new Set(rows.map(r => r.Condition))];
+
+  conditions.forEach((cond, i) => {
+    const data = rows.filter(r => r.Condition === cond);
+
+    const x = data.map(r => r.x);
+    const y = data.map(r => r.y);
+    const z = data.map(r => r.z);
+    const cap = data.map(r => r.Capacity);
+
+    // Trace chính
+    const mainTraceIndex = traces.length;
+    traces.push({
+      name: cond,
+      x, y, z,
+      mode: "lines+markers",
+      type: "scatter3d",
+      text: data.map(r =>
+        `Date: ${r.Date}<br>Capacity: ${r.Capacity}%`
+      ),
+      marker: {
+        size: 6,
+        color: showCapacity ? cap : "gray",
+        colorscale: "Jet",
+        colorbar: showCapacity && i === 0 ? { title: "Capacity (%)" } : undefined
+      }
+    });
+
+    // Điểm bắt đầu (xanh)
+    traces.push({
+      name: cond + " (Start)",
+      x: [x[0]],
+      y: [y[0]],
+      z: [z[0]],
+      mode: "markers",
+      type: "scatter3d",
+      marker: { size: 9, color: "green" }
+    });
+
+    // Điểm kết thúc (đỏ)
+    traces.push({
+      name: cond + " (End)",
+      x: [x[x.length - 1]],
+      y: [y[y.length - 1]],
+      z: [z[z.length - 1]],
+      mode: "markers",
+      type: "scatter3d",
+      marker: { size: 9, color: "red" }
+    });
+
+    conditionMap[cond] = mainTraceIndex;
+
+    document.getElementById("conditionControls").innerHTML +=
+      `<label>
+        <input type="checkbox" checked
+          onchange="toggleCondition('${cond}', this.checked)">
+        ${cond}
+      </label>`;
+  });
+
+  Plotly.newPlot("plot", traces, {
+    title: "Riser Displacement 3D",
+    scene: {
+      xaxis: { title: "N – S" },
+      yaxis: { title: "W – E" },
+      zaxis: { title: "Vertical" }
+    },
+    legend: { orientation: "h" }
+  });
+}
+
+function toggleCondition(cond, visible) {
+  const idx = conditionMap[cond];
+  Plotly.restyle(
+    "plot",
+    { visible: visible ? true : "legendonly" },
+    [idx, idx + 1, idx + 2]
+  );
+}
+
+function toggleCapacity(enable) {
+  showCapacity = enable;
+
+  traces.forEach((t, i) => {
+    if (t.mode === "lines+markers") {
+      Plotly.restyle("plot", {
+        "marker.color": enable ? [t.marker.color] : ["gray"],
+        "marker.colorbar": enable ? t.marker.colorbar : null
+      }, i);
+    }
+  });
+}
+</script>
+
+</body>
+</html>
